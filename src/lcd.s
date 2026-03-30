@@ -2774,6 +2774,34 @@ gammaconvert:@	takes value in r0(0-0xFF), gamma in r1(0-4),returns new value in 
 
 	.pushsection .text
 @----------------------------------------------------------------------------
+@ Fill DMA buffer entry when full palette written (called from FF69_W)
+@ Only fills if pal_scanline_active is set and scanline < 144
+@----------------------------------------------------------------------------
+pal_dma_fill_scanline:
+	ldr r2,=pal_scanline_active
+	ldr r2,[r2]
+	cmp r2,#0
+	bxeq lr
+	ldrb_ r2,scanline
+	cmp r2,#144
+	bxge lr
+	stmfd sp!,{r0-r6,lr}
+	ldr r0,=pal_dma_buffer
+	add r0,r0,r2,lsl#8		@ buffer[scanline * 256]
+	ldr r2,=gbc_palette
+	mov r3,#8
+1:	ldr r4,[r2],#4
+	ldr r5,[r2],#4
+	str r4,[r0],#4
+	str r5,[r0],#4
+	add r0,r0,#24
+	subs r3,r3,#1
+	bne 1b
+	ldmfd sp!,{r0-r6,pc}
+	.popsection
+
+	.pushsection .text
+@----------------------------------------------------------------------------
 FF46_W:@		sprite DMA transfer
 @----------------------------------------------------------------------------
 @	and r0,r0,#0xff		;not needed?
@@ -3121,7 +3149,7 @@ end_gba_hdma:
 	strh r2,[r2,#REG_DM0CNT_H]	@DMA stop
 	strh r2,[r2,#REG_DM1CNT_H]
 	strh r2,[r2,#REG_DM2CNT_H]
-@	strh r2,[r2,#REG_DM3CNT_H]
+	strh r2,[r2,#REG_DM3CNT_H]
 
 	ldr r0,=vbldummy
 	str r0,vcountfptr
@@ -3130,8 +3158,8 @@ end_gba_hdma:
 	strh r0,[r2,#REG_DISPSTAT]
 
 	bx lr
-	
-	
+
+
 
 
 	.pushsection .text
@@ -3163,6 +3191,20 @@ pal_hdma_wrapper:
 	orr r0,r0,#0x28		@ enable vblank+vcount interrupts
 	strh r0,[r2,#REG_DISPSTAT]
 pal_hdma_done:
+	@ Check for per-scanline DMA3 mode
+	ldr r0,=pal_scanline_active
+	ldr r0,[r0]
+	cmp r0,#0
+	beq pal_hdma_no_dma3
+	@ Set up DMA3 for per-scanline HBlank palette updates
+	mov r2,#REG_BASE
+	ldr r0,=pal_dma_buffer
+	str r0,[r2,#REG_DM3SAD]
+	ldr r0,=PALETTE_BASE+256
+	str r0,[r2,#REG_DM3DAD]
+	ldr r0,=0xA6600040		@ 64 words, 32-bit, HBlank repeat, dest reload
+	str r0,[r2,#REG_DM3CNT_L]
+pal_hdma_no_dma3:
 	ldmfd sp!,{r10,pc}
 
 @----------------------------------------------------------------------------
@@ -3376,6 +3418,13 @@ newframe_vblank:	@called at line 144	(??? safe to use)
 	ldrb r0,[r1]
 	ldr r1,=pal_split_count_screen
 	strb r0,[r1]
+
+	@ Enable DMA3 per-scanline mode if >16 palette changes
+	ldr r1,=pal_scanline_active
+	cmp r0,#16
+	movgt r2,#1
+	movle r2,#0
+	str r2,[r1]
 
 	@ Apply gamma correction to split palettes if needed
 	cmp r0,#0
@@ -4961,6 +5010,8 @@ FF69_W:	@BCPD - BG Color Palette Data
 	strb r0,[addy,r2]
 	mov r2,#1
 	strb_ r2,pal_dirty
+	@ (DMA3 buffer fill hook — currently disabled for testing)
+
 	tst r1,#0x80
 	addne r1,r1,#1
     @Minucce's tweaks
