@@ -553,7 +553,6 @@ RECENT_TILENUM_SIZE = 128
 	_m_ xgb_ram,0x2000
  _m_ xgb_hram,0x80
 
- 
 
 @----------------------------------------------------------------------------
 @IRQ_VECTOR EQU 0xfffe ; IRQ/BRK interrupt vector address
