@@ -1767,7 +1767,21 @@ newframeinit:
 	
 	@fall thru to newmode  (calls newmode then returns)
 
+@ IWRAM stubs — newmode cluster moved to .text
 newmode:
+	b_long newmode_impl
+entermode0_stub:
+	b_long entermode0_
+entermode1_stub:
+	b_long entermode1_
+entermode2_stub:
+	b_long entermode2_
+mode0_update_scroll:
+	b_long mode0_update_scroll_impl
+mode2_update_scroll:
+	b_long mode2_update_scroll_impl
+	.pushsection .text
+newmode_impl:
 	ldrb_ r0,lcdctrl
 	tst r0,#0x20
 	beq entermode0
@@ -1853,7 +1867,7 @@ entermode2_:
 	.endif
 	str_ r1,bg23cnt
 
-mode2_update_scroll:
+mode2_update_scroll_impl:
 	ldr_ r1,windowyscroll
 	
 	@get wx
@@ -1933,7 +1947,7 @@ entermode0_:
 	addne r1,r1,#0x0200
 	subne r1,r1,#1
 	str_ r1,bg23cnt
-mode0_update_scroll:
+mode0_update_scroll_impl:
 	@get y pos
 	ldrb_ r0,scrollY
 	sub r0,r0,#SCREEN_Y_START
@@ -1991,7 +2005,7 @@ entermode1_:
 	subne r1,r1,#1
 	str_ r1,bg23cnt
 	
-mode1_update_scroll:
+mode1_update_scroll_impl:
 	ldr_ r1,windowyscroll
 	@get wx
 	ldrb_ r0,windowX
@@ -2003,6 +2017,8 @@ mode1_update_scroll:
 	orr r1,r1,r0,lsr#16
 	str_ r1,xyscroll
 	bx lr
+	.ltorg
+	.popsection
  .pushsection .iwram.3
 
 bufferfinish:
@@ -2061,10 +2077,10 @@ tobuffer:
 	ldrb_ r1,windowX
 	cmp r1,#7
 	bgt 1f
-	bl entermode1_
+	bl entermode1_stub
 	cmp r0,r0
 1:
-	blgt entermode2_
+	blgt entermode2_stub
 	ldmfd sp!,{r2,addy,lr}
 
 	subs r0,r2,addy
@@ -2139,7 +2155,14 @@ tobuffer:
 @	bl apply16
 	ldmfd sp!,{r3-r8,pc}
 .popsection
+@ IWRAM stubs — bodies moved to .text to free IWRAM space
 tobuffer_split:
+	b_long tobuffer_split_impl
+apply16:
+	b_long apply16_impl
+
+	.pushsection .text
+tobuffer_split_impl:
 	stmfd sp!,{r3-r8,lr}
 	adr_ addy,bigbuffer
 	ldmia addy,{r1-r5}
@@ -2155,7 +2178,7 @@ tobuffer_split:
 	tst r8,#0x0000FF00
 	ldrne_ r6,ui_border_scroll2
 	ldr_ r7,ui_border_scroll3
-0:	
+0:
 	mov r8,r0
 
 1:
@@ -2177,28 +2200,28 @@ tobuffer_split:
 	adrl_ addy,dispcntdata
 	ldr_ r2,dispcntaddr
 	add r4,r2,#144*2
-	bl apply16
+	bl apply16_impl
 	str_ r2,dispcntaddr
 	mov r2,r4
 	adrl_ addy,windata
-	bl apply16
+	bl apply16_impl
 	ldmfd sp!,{r3-r8,pc}
 
-apply16:
+apply16_impl:
 	@sets halfwords, plus one extra one if end is not aligned
 	@r8 = count (in halfwords)
 	@r2 = dest, does not have to be word aligned
 	@addy = pointer to halfword repeated - 4
-	
+
 	@out: r2 = next halfword to write to
 	mov r0,r8,lsl#1
-	
+
 	@make aligned
 	tst r2,#2
 	ldrne r1,[addy]!
 	strneh r1,[r2],#2
 	subne r0,r0,#2
-	
+
 	@DMA transfer, possibly plus one extra halfword
 	mov r1,#REG_BASE
 	str addy,[r1,#REG_DM3SAD]
@@ -2210,8 +2233,7 @@ apply16:
 	bicne addy,addy,#0xFF000000
 	add r2,r2,r0
 	bx lr
-
-	.ltorg
+	.popsection
 	
 @
 @@
