@@ -28,7 +28,7 @@
 	global_func memcpy32
 	global_func memcpy_unaligned_src
 	
-	.global sram_W2_modify
+	@ sram_W2 computes write-through base from rammask at runtime
 @----------------------------------------------------------------------------
 empty_R:		@read bad address (error)
 @----------------------------------------------------------------------------
@@ -104,13 +104,22 @@ mem_RC0_2:	@ram read ($D000-$DFFF)
 @----------------------------------------------------------------------------
 sram_W2:	@write to real sram ($A000-$BFFF)  AND emulated sram
 @----------------------------------------------------------------------------
-	orr r1,addy,#0xe000000	@r1=e00A000+
-sram_W2_modify:
+	@ Map GBC SRAM to GBA cart SRAM with bank support.
+	@ GBA SRAM addr = 0x0E000000 + (cart_size - game_sram_size) + (addy & 0x1FFF) + bank*0x2000
+	@ cart_size - game_sram_size = cart_size - (rammask+1) = ~rammask + cart_size
+	@ Computed from rammask at runtime so it works for all game SRAM sizes.
+	ldr_ r1,rammask
+	mvn r1,r1			@r1 = ~rammask = -(rammask+1)
  .if SRAM_32
- 	sub r1,r1,#0x4000   @32k sram: A000>>6000
- .else @64k sram
-	add r1,r1,#0x4000   @64k sram: A000>>E000
+	add r1,r1,#0x8000		@r1 = 0x8000 - game_sram_size
+ .else
+	add r1,r1,#0x10000		@r1 = 0x10000 - game_sram_size
  .endif
+	mov r2,addy,lsl#19
+	add r1,r1,r2,lsr#19		@r1 += addy & 0x1FFF
+	ldr_ r2,srambank
+	add r1,r1,r2,lsl#13		@r1 += bank * 0x2000
+	orr r1,r1,#0x0e000000		@r1 = GBA cart SRAM address
 	strb r0,[r1]
 @----------------------------------------------------------------------------
 sram_W:	@sram write ($A000-$BFFF)
