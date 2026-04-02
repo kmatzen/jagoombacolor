@@ -8,11 +8,13 @@ missing, and how feasible each gap is to close.
 | Test | Result | Notes |
 |------|--------|-------|
 | Blargg cpu_instrs | **PASS** | All 11 instruction tests |
-| Blargg instr_timing | FAIL | RST 38h timing off |
+| Blargg instr_timing | FAIL | RST 38h timing off (cause unclear) |
 | Blargg mem_timing | FAIL | Fundamental architecture limitation |
 | Blargg mem_timing2 | FAIL | Same |
 | cgb-acid2 | **PASS** | Minor BG/OBJ priority eye artifacts |
-| 12 game regression tests | **PASS** | Crystal, Shantae, Zelda DX, Kirby, etc. |
+| EI delay test | **PASS** | Custom test ROM validates 1-instruction delay |
+| Sprite limit test | **PASS** | Custom test ROM validates 10/line limit |
+| 14 game regression tests | **PASS** | Crystal, Shantae, Zelda DX, Kirby, etc. |
 
 ---
 
@@ -24,14 +26,9 @@ missing, and how feasible each gap is to close.
 - HALT with interrupt wake-up
 - DAA (decimal adjust) fully correct
 - Interrupt priority ordering (VBlank > STAT > Timer > Serial > Joypad)
+- EI 1-instruction delay (interrupts enabled after next instruction completes)
 
 ### Gaps
-
-**EI delay not implemented** — FEASIBLE
-> Real hardware: EI takes effect after the *next* instruction. Current code
-> enables interrupts immediately. Most games don't depend on this, but it's
-> a known edge case for timing-sensitive code.
-> *Fix: set a flag in EI handler, check it after the next fetch.*
 
 **STOP instruction simplified** — LOW PRIORITY
 > Only handles double-speed toggle. Doesn't block waiting for joypad/interrupt
@@ -40,7 +37,8 @@ missing, and how feasible each gap is to close.
 **RST 38h timing** — UNCLEAR
 > Blargg's instr_timing test fails specifically on RST 38h. The instruction
 > uses `fetch 16` which matches documentation. May be a cycle-counting
-> methodology difference rather than a real bug.
+> methodology difference rather than a real bug. No test ROM available to
+> investigate further.
 
 **Memory timing (mem_timing, mem_timing2)** — NOT FEASIBLE
 > These tests verify cycle-accurate memory access timing (e.g., that a read
@@ -59,6 +57,7 @@ missing, and how feasible each gap is to close.
 - LYC=LY coincidence interrupt with 0→1 edge detection
 - Window rendering (WX, WY) with per-scanline buffering
 - Sprite rendering with 8x8/8x16 mid-frame tracking
+- 10 sprites per scanline limit (sprites hidden if over limit on all scanlines)
 - OAM DMA (FF46) with pattern-detection optimization
 - GBC HDMA (FF51-FF55): both general and HBlank modes
 - VRAM banking (FF4F)
@@ -67,14 +66,6 @@ missing, and how feasible each gap is to close.
 - Mid-frame scroll register changes via DMA0/DMA1/DMA2
 
 ### Gaps
-
-**10 sprites per scanline limit not enforced** — FEASIBLE but risky
-> Real GB/GBC drops sprites 11+ per scanline. The emulator renders all 40
-> OAM entries without filtering. Most games stay under the limit, but some
-> use it intentionally for flickering effects (e.g., alternating which
-> sprites to show each frame).
-> *Fix: count sprites per scanline during OAM scan. Risk: may break games
-> that rely on the GBA showing all sprites.*
 
 **CGB BG/OBJ priority not pixel-perfect** — HARD
 > cgb-acid2 shows minor "eye artifacts" from priority handling. CGB has
@@ -142,7 +133,7 @@ GBA sound registers. The GBA hardware generates the actual audio.
 
 ### Gaps
 
-**DIV is not a true 16-bit counter** — FEASIBLE but low priority
+**DIV is not a true 16-bit counter** — LOW PRIORITY
 > Real GB has a 16-bit internal counter; DIV is bits 15-8. Writing DIV
 > resets the full 16-bit counter, which can cause a "falling edge" on the
 > timer's selected bit, potentially triggering an unexpected TIMA increment.
@@ -165,21 +156,14 @@ GBA sound registers. The GBA hardware generates the actual audio.
 - **MBC0**: ROM only (no banking)
 - **MBC1**: 5-bit ROM bank + 2-bit upper, mode switching
 - **MBC2**: 4-bit ROM bank, built-in 512-nibble RAM
-- **MBC3**: 7-bit ROM bank, RTC register selection + latch
+- **MBC3**: 7-bit ROM bank, RTC register selection + latch, software RTC fallback
 - **MBC5**: 9-bit ROM bank, rumble bit (conditional compilation)
 - **HuC1/HuC3**: Hudson Soft mappers (basic support)
 - RAM enable/disable (0x0A magic value)
 - SRAM bank switching
+- SRAM write-through persistence (no compressed save system needed)
 
 ### Gaps
-
-**MBC3 RTC reads from GBA hardware, not emulated** — HARD
-> RTC values come from the GBA cartridge's physical RTC chip via
-> bit-banging at 0x080000C4. In emulators (mGBA), this hardware doesn't
-> exist, so RTC reads return garbage. Games like Pokemon Crystal show wrong
-> time. GitHub issue #30 (Pokemon Prism).
-> *Fix: implement a software RTC using the GBA's own timer or a saved
-> epoch. Moderate effort.*
 
 **MBC4/MBC6/MMM01 are stubs** — LOW PRIORITY
 > These rare mappers have init functions but no banking logic. Very few
@@ -222,8 +206,8 @@ GBA sound registers. The GBA hardware generates the actual audio.
 
 **Status: Stubbed** — HARD
 > Serial data writes (FF01) are ignored. Reads return 0xFF (no device).
-> Serial interrupt is triggered immediately when internal clock is enabled
-> (no actual bit transfer timing). This means:
+> Serial interrupt is triggered after one scanline when internal clock is
+> enabled. This means:
 > - No link cable multiplayer
 > - No printer support
 > - Games that require serial handshake may hang
@@ -240,7 +224,7 @@ These are fundamental to running a GB/GBC emulator on GBA hardware:
 
 | Constraint | Impact |
 |------------|--------|
-| **IWRAM: 32KB, 98.7% used** | Cannot add significant new per-scanline code |
+| **IWRAM: 32KB, ~97% used** | Limited room for new per-scanline code |
 | **All 4 GBA DMA channels allocated** | No spare DMA for new features |
 | **ARM/GBC cycle ratio ~3:1** | GBC frame spans ~2 GBA frames |
 | **16MHz ARM7TDMI** | No room for software audio synthesis or per-pixel compositing |
@@ -249,19 +233,25 @@ These are fundamental to running a GB/GBC emulator on GBA hardware:
 
 ---
 
-## Summary: What's Worth Fixing
+## Remaining Gaps (all low priority or not feasible)
 
-### Easy wins (low effort, real impact)
-1. **EI delay** — one flag + one check per fetch
-2. **10 sprites/line limit** — counter in OAM scan loop
+The easy and moderate items have been addressed. What remains:
 
-### Moderate effort, meaningful impact
-3. **MBC3 software RTC** — would fix Pokemon time display in emulators
-4. **Serial "no partner" stub** — return proper handshake failure instead of hanging
-
-### Hard / not feasible on GBA
-5. Pixel-perfect CGB priority (need per-pixel compositing)
-6. Memory timing accuracy (need per-access cycle counting)
-7. Software audio synthesis (no CPU budget)
-8. Per-scanline palette desync (fundamental cycle ratio)
-9. Sub-scanline rendering (complete rewrite)
+| Gap | Difficulty | Notes |
+|-----|-----------|-------|
+| STOP joypad wait | LOW PRIORITY | No known game depends on it |
+| RST 38h timing | UNCLEAR | Matches docs; no test ROM available |
+| Memory timing | NOT FEASIBLE | Would need per-access cycle counting |
+| CGB BG/OBJ priority | HARD | Needs per-pixel compositing |
+| STAT mode 0/2 interrupts | UNCLEAR | Disabled intentionally; low impact |
+| Per-scanline palette desync | NOT FEASIBLE | Fundamental cycle ratio |
+| Sub-scanline rendering | NOT FEASIBLE | Complete rewrite needed |
+| Software audio synthesis | NOT FEASIBLE | No CPU budget |
+| Sound edge cases | LOW PRIORITY | Rarely used by games |
+| DIV 16-bit counter | LOW PRIORITY | No known game depends on it |
+| TAC edge detection | LOW PRIORITY | Extremely obscure |
+| TIMA overflow delay | LOW PRIORITY | Extremely obscure |
+| MBC4/MBC6/MMM01 | LOW PRIORITY | Very few games |
+| MBC7 accelerometer | NOT FEASIBLE | No hardware |
+| Infrared port | LOW PRIORITY | Handful of games |
+| Serial / link cable | HARD | Needs GBA link hardware |
