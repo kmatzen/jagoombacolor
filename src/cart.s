@@ -344,7 +344,7 @@ loadcart: @called from C:  r0=rom number, r1=emuflags
 	beq dont_use_true_sram
 	tst r3,#0x08000000
 	beq dont_use_true_sram
-	ldr r1,=sram_W2			@ write-through for all SRAM sizes (64K cart)
+	ldr r1,=sram_W2
 dont_use_true_sram:
 	str_ r1,sramwptr
 	

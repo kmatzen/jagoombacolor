@@ -3,8 +3,10 @@
 
 Tests:
   1. Write-through: sram_W2 writes to both emulated XGB_SRAM and GBA cart SRAM
-  2. Save reload:   a save persisted via Goomba's UI can be reloaded on a
-                     fresh boot with the same .sav file
+     (8KB games only — 32KB+ overlaps the config area so write-through is
+     disabled for those)
+  2. Save reload:   a save persisted via Goomba's compressed save system can
+                     be reloaded on a fresh boot with the same .sav file
 
 Usage:
     python3 test_roms/test_sram_writethrough.py
@@ -62,9 +64,14 @@ def run_mgba(gba_path, frames, inputs, memdumps=None, savefile=None):
     return dumps
 
 
+# --- SML2: 8KB SRAM, 1 bank, MBC1+RAM+BATTERY ---
+SML2_ROM_NAME = "Super Mario Land 2 - 6 Golden Coins (USA, Europe) (Rev 2).gb"
+SML2_SRAM_SIZE = 8192
+
+# --- Crystal: 32KB SRAM, 4 banks, MBC3+TIMER+RAM+BATTERY ---
+CRYSTAL_ROM_NAME = "Pokemon - Crystal Version (USA, Europe) (Rev 1).gbc"
 CRYSTAL_SRAM_SIZE = 32768
 CRYSTAL_NUM_BANKS = 4
-CRYSTAL_ROM_NAME = "Pokemon - Crystal Version (USA, Europe) (Rev 1).gbc"
 
 
 def crystal_advance_inputs():
@@ -76,18 +83,18 @@ def crystal_advance_inputs():
 def test_writethrough(tmpdir):
     """Verify sram_W2 writes game save data to GBA cart SRAM.
 
-    Play Crystal, trigger an in-game save, then compare XGB_SRAM (emulated)
-    with the corresponding region in GBA cart SRAM (write-through target).
+    Uses Crystal (32KB SRAM, 4 banks) to test the hardest case — save_start
+    must be moved down to 0x8000 to avoid overlapping the config area.
     """
     print(f"\n{'='*60}")
-    print("Test: SRAM write-through (Crystal 32KB)")
+    print("Test: SRAM write-through (Crystal, 32KB)")
 
     crystal = SCRIPT_DIR / CRYSTAL_ROM_NAME
     if not crystal.exists():
         print(f"  SKIP: ROM not found")
         return None
 
-    gba_path = tmpdir / "crystal.gba"
+    gba_path = tmpdir / "crystal_wt.gba"
     if not compile_rom(crystal, gba_path):
         return False
 
@@ -97,7 +104,7 @@ def test_writethrough(tmpdir):
         "8400:A", "8600:B", "8800:B",             # dismiss + close menu
     ]
 
-    sram_offset = GBA_CART_SIZE - CRYSTAL_SRAM_SIZE
+    sram_offset = GBA_CART_SIZE - CRYSTAL_SRAM_SIZE  # 0x8000
     dumps = run_mgba(
         gba_path, 9600, inputs,
         memdumps={
@@ -112,8 +119,9 @@ def test_writethrough(tmpdir):
 
     xgb, gba = dumps["xgb"], dumps["gba"]
     xgb_nz = sum(1 for b in xgb if b != 0)
+    gba_nz = sum(1 for b in gba if b != 0)
     print(f"  XGB_SRAM: {xgb_nz} non-zero bytes")
-    print(f"  GBA SRAM: {sum(1 for b in gba if b != 0)} non-zero bytes")
+    print(f"  GBA SRAM: {gba_nz} non-zero bytes")
 
     if xgb_nz == 0:
         print(f"  SKIP: Game did not write to SRAM")
@@ -129,6 +137,7 @@ def test_writethrough(tmpdir):
             print(f"  Bank {bank}: {bnz} non-zero, {mm} mismatches")
 
     match_pct = (1 - total_mm / CRYSTAL_SRAM_SIZE) * 100
+    # Allow small mismatch from stack pushes that bypass sram_W2.
     passed = match_pct >= 95.0
     print(f"  Match: {match_pct:.1f}% ({total_mm} mismatches)")
     print(f"  Result: {'PASS' if passed else 'FAIL'}")
@@ -136,17 +145,15 @@ def test_writethrough(tmpdir):
 
 
 def test_save_reload(tmpdir):
-    """Verify that a game save persists across sessions.
+    """Verify that a game save persists across sessions via write-through.
 
-    Run 1: Play Crystal, save in-game, then open Goomba UI (L+R) so
-           backup_gb_sram compresses the save into GBA SRAM.  The --savefile
-           flag causes mGBA to persist the SRAM to a .sav file on exit.
-    Run 2: Boot the same ROM with the .sav from run 1.  Advance past the
-           Goomba menu into the game and dump XGB_SRAM.  The decompressed
-           save data should match run 1.
+    Run 1: Play Crystal, do an in-game save.  Write-through puts the data
+           directly in GBA cart SRAM, which mGBA persists to the .sav file.
+    Run 2: Boot with the .sav from run 1, verify XGB_SRAM is restored
+           (get_saved_sram copies from the write-through region).
     """
     print(f"\n{'='*60}")
-    print("Test: Save reload (Crystal 32KB)")
+    print("Test: Save reload (Crystal, 32KB)")
 
     crystal = SCRIPT_DIR / CRYSTAL_ROM_NAME
     if not crystal.exists():
@@ -159,17 +166,15 @@ def test_save_reload(tmpdir):
 
     savefile = tmpdir / "crystal.sav"
 
-    # --- Run 1: play, in-game save, Goomba UI flush ---
+    # --- Run 1: play and in-game save (write-through persists to .sav) ---
     run1_inputs = crystal_advance_inputs() + [
         "7000:Start", "7200:Down", "7400:Down",
-        "7600:A", "7900:A",
-        "8400:A", "8600:B", "8800:B",
-        "9200:L+R",     # open Goomba UI → backup_gb_sram
-        "9600:B",       # close Goomba UI
+        "7600:A", "7900:A",                       # save
+        "8400:A", "8600:B", "8800:B",             # dismiss
     ]
 
     dumps1 = run_mgba(
-        gba_path, 10200, run1_inputs,
+        gba_path, 9600, run1_inputs,
         memdumps={
             "xgb": (XGB_SRAM_ADDR, CRYSTAL_SRAM_SIZE,
                     str(tmpdir / "run1_xgb.bin")),
@@ -193,9 +198,6 @@ def test_save_reload(tmpdir):
     print(f"  Save file: {savefile.stat().st_size} bytes")
 
     # --- Run 2: reload and verify ---
-    # A-spam to get past Goomba splash/menu into the game.  The save is
-    # loaded during loadcart (get_saved_sram).  By frame ~3000 we're well
-    # past that point.
     run2_inputs = [f"{f}:A" for f in range(300, 3000, 45)]
 
     dumps2 = run_mgba(
@@ -213,8 +215,7 @@ def test_save_reload(tmpdir):
     reload_nz = sum(1 for b in reload_xgb if b != 0)
     print(f"  Run 2 XGB_SRAM: {reload_nz} non-zero bytes")
 
-    # Compare non-empty banks.  The game may update a few bytes (RTC,
-    # frame counters) so we allow up to 10% mismatch.
+    # Compare non-empty banks.
     total_mm = 0
     total_compared = 0
     for bank in range(CRYSTAL_NUM_BANKS):
