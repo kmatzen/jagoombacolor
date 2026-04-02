@@ -550,6 +550,49 @@ checkTimerIRQ:
 	mov r0,r0,lsl#24
 noTimerIRQ:
 	str_ r0,timercounter
+	@ Predict if TIMA will overflow during the next scanline.
+	@ If so, schedule a mid-scanline timeout to fire the interrupt
+	@ at the overflow point instead of waiting for the next scanline.
+	rsbs r0,r0,#0			@r0 = distance to overflow (unsigned)
+	beq noTimer
+	mov r0,r0,lsr r1		@cycles to overflow (r1 = shift)
+	cmp r0,r2,lsr#1		@in first half of scanline?
+	bhs noTimer			@no → normal per-scanline handling
+	@ Redirect nexttimeout for mid-scanline overflow
+	ldr_ r1,nexttimeout
+	str_ r1,nexttimeout_alt
+	adr r1,tima_overflow_handler
+	str_ r1,nexttimeout
+	sub r1,r2,r0			@r1 = deficit
+	stmfd sp!,{r1}			@save for handler
+	sub cycles,cycles,r1		@steal cycles
+
+	@ Also need to prevent checkTimerIRQ from re-adding a full scanline
+	@ to timercounter after the overflow.  Zero the timercyclesperscanline
+	@ temporarily — the handler restores it.
+	stmfd sp!,{r2}			@save real timercyclesperscanline
+	mov r1,#0
+	str_ r1,timercyclesperscanline
+	b noTimer
+
+tima_overflow_handler:
+	@ Fire timer interrupt
+	ldrb_ r0,gb_if
+	orr r0,r0,#0x04
+	strb_ r0,gb_if
+	ldrb_ r0,timermodulo
+	mov r0,r0,lsl#24
+	str_ r0,timercounter
+	@ Restore timercyclesperscanline
+	ldmfd sp!,{r0}
+	str_ r0,timercyclesperscanline
+	@ Restore nexttimeout and stolen cycles
+	ldr_ r0,nexttimeout_alt
+	str_ r0,nexttimeout
+	ldmfd sp!,{r0}
+	add cycles,cycles,r0
+	b _GO
+
 noTimer:
 	ldrb_ r1,stctrl
 	and r1,r1,#0x81
