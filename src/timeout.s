@@ -127,10 +127,13 @@ line0x:
 	strneb r2,[r1]		@
 	strneb r2,[r1,#-12] @FIXME
 
-	ldr_ r0,cyclesperscanline
+	@ Phase 1 of scanline 0: Mode 2+3 budget only
+	ldr_ r0,scanline_oam_position	@204*CYCLE
+	ldr_ r1,cyclesperscanline
+	sub r0,r1,r0			@252*CYCLE
 	add cycles,cycles,r0
 
-	ldr r0,=line1_to_71
+	ldr r0,=hblank1_to_71
 	str_ r0,nexttimeout
 
 	adrl_ r1,FF41_R_function
@@ -144,43 +147,82 @@ line0x:
  .section .iwram.3, "ax", %progbits
 
 line1_to_71: @------------------------
-	ldr_ r0,cyclesperscanline
+	@ Phase 1: Mode 2+3 (OAM scan + drawing). Add partial scanline budget.
+	@ On real hardware, mode 2 starts at cycle 0 and lasts 80 cycles,
+	@ then mode 3 (drawing) lasts ~172 cycles. Total = 252 cycles before HBlank.
+	ldr_ r0,scanline_oam_position	@204*CYCLE (DMG) or 408*CYCLE (CGB)
+	ldr_ r1,cyclesperscanline
+	sub r0,r1,r0			@252*CYCLE (DMG) or 504*CYCLE (CGB)
 	add cycles,cycles,r0
 
 	ldrb_ r1,scanline
 	add r1,r1,#1
 	strb_ r1,scanline
 	cmp r1,#75		@was 71
-	ldrmi_ pc,scanlinehook
+	bmi .line1_71_sethblank
 @--------------------------------------------- between 71 and 72
 
 	ldrb_ r0,lcdctrl
 	strb_ r0,lcdctrl0midframe		@Chase HQ likes this
-	
+
 	ldrb_ r0,sgb_mask
 	movs r0,r0
 	bleq_long copy_gbc_palette
-	
-	@@@
-	@@@bl gbc_chr_update
-	@@@
 
-	adr addy,line72_to_143
+	adr addy,hblank72_to_143
 	str_ addy,nexttimeout
 	ldr_ pc,scanlinehook
+
+.line1_71_sethblank:
+	adr addy,hblank1_to_71
+	str_ addy,nexttimeout
+	ldr_ pc,scanlinehook
+
+hblank1_to_71: @--- Phase 2: Mode 0 (HBlank) ---
+	ldr_ r0,scanline_oam_position	@204*CYCLE (DMG) or 408*CYCLE (CGB)
+	add cycles,cycles,r0
+
+	adr addy,line1_to_71
+	str_ addy,nexttimeout
+	b_long hblank_scanlinehook
+
 line72_to_143: @------------------------
-	ldr_ r0,cyclesperscanline
+	@ Phase 1: Mode 2+3 — same split as line1_to_71
+	ldr_ r0,scanline_oam_position
+	ldr_ r1,cyclesperscanline
+	sub r0,r1,r0
 	add cycles,cycles,r0
 
 	ldrb_ r1,scanline
 	add r1,r1,#1
 	strb_ r1,scanline
 	cmp r1,#143
-	ldrmi_ pc,scanlinehook
+	bmi .line72_143_sethblank
+
+	adr addy,hblank_pre144
+	str_ addy,nexttimeout
+	ldr_ pc,scanlinehook
+
+.line72_143_sethblank:
+	adr addy,hblank72_to_143
+	str_ addy,nexttimeout
+	ldr_ pc,scanlinehook
+
+hblank72_to_143: @--- Phase 2: Mode 0 (HBlank) ---
+	ldr_ r0,scanline_oam_position
+	add cycles,cycles,r0
+
+	adr addy,line72_to_143
+	str_ addy,nexttimeout
+	b_long hblank_scanlinehook
+
+hblank_pre144: @--- Phase 2: HBlank before VBlank ---
+	ldr_ r0,scanline_oam_position
+	add cycles,cycles,r0
 
 	adr addy,line144
 	str_ addy,nexttimeout
-	ldr_ pc,scanlinehook
+	b_long hblank_scanlinehook
 
 	.pushsection .iwram.3
 line144: @------------------------
@@ -342,6 +384,55 @@ toLineZero_modify2:
 	ldr_ pc,scanlinehook
 #endif
 
+@----------------------------------------------------------
+@ HBlank scanline hook: runs at mode 3→0 transition (cycle 204)
+@ Handles HDMA and mode 0 STAT IRQ, then falls through to timer/IRQ checks
+@----------------------------------------------------------
+hblank_scanlinehook:
+	@ HDMA: transfer one block during HBlank
+	ldrb_ r1,dma_blocks_total
+	cmp r1,#0
+	beq .hblank_no_hdma
+	stmfd sp!,{r0-r12,lr}
+	mov r0,#16
+	blx_long DoDma
+	ldmfd sp!,{r0-r12,lr}
+	ldr_ r1,cyclesperscanline
+	cmp r1,#DOUBLE_SPEED
+	mov r1,#8 << CYC_SHIFT
+	moveq r1,#16 << CYC_SHIFT
+	sub cycles,cycles,r1
+	ldr r1,=_dma_blocks_remaining
+	ldrb r2,[r1]
+	sub r2,r2,#1
+	strb r2,[r1]
+	cmp r2,#0
+	bne .hblank_no_hdma
+	ldr r1,=_dma_blocks_total
+	strb r2,[r1]
+.hblank_no_hdma:
+	@ Check mode 0 (HBlank) STAT IRQ
+	tst cycles,#CYC_LCD_ENABLED
+	beq .hblank_no_stat
+	adrl r1,lcdstat
+	ldrb r2,[r1]
+	tst r2,#0x01			@in vblank? skip
+	bne .hblank_no_stat
+	tst r2,#0x08			@mode 0 HBlank IRQ enabled?
+	beq .hblank_no_stat
+	@ IRQ blocking: if LYC=LY holds line high, no rising edge
+	tst r2,#0x40			@LYC IE enabled?
+	tstne r2,#0x04			@AND coincidence flag set?
+	bne .hblank_no_stat		@blocked
+	@ Also block if mode 2 IE was holding line high from earlier this scanline
+	tst r2,#0x20			@mode 2 OAM IE enabled?
+	bne .hblank_no_stat		@blocked: mode 2 held line high
+	ldrb_ r0,gb_if
+	orr r0,r0,#0x02		@2=LCD STAT
+	strb_ r0,gb_if
+.hblank_no_stat:
+	b_long checkTimerIRQ
+
 immediate_check_irq:
 	ldrb_ r0,gb_ie		@0xFFFF=Interrupt Enable.
 	ldrb_ r1,gb_if
@@ -377,41 +468,13 @@ no_more_irq_hack:
 
 
 @----------------------------------------------------------
+@ Mode 2 scanline hook: runs at start of each visible scanline
+@ Handles LYC check and mode 2 (OAM) STAT IRQ.
+@ HDMA and mode 0 IRQ are now handled by hblank_scanlinehook.
+@----------------------------------------------------------
 default_scanlinehook:
 checkScanlineIRQ:
 default_scanlinehook_nohblank:
-    ldrb_ r1,dma_blocks_total
-    cmp r1,#0
-    beq _checkScanlineIRQ  @ If not mid-hdma, continue normal execution.
-    @ Else, fall through to tick_hdma
-tick_hdma:
-    @ Transfer one 16-byte block per HBlank (matching real GBC behavior)
-    stmfd sp!,{r0-r12,lr}
-    mov r0,#16
-    blx_long DoDma
-    ldmfd sp!,{r0-r12,lr}
-
-    @ Steal CPU cycles for HDMA block (8 machine cycles, 16 in double speed)
-    ldr_ r1,cyclesperscanline
-    cmp r1,#DOUBLE_SPEED
-    mov r1,#8 << CYC_SHIFT
-    moveq r1,#16 << CYC_SHIFT
-    sub cycles,cycles,r1
-
-    @ Decrement _dma_blocks_remaining
-    ldr r1,=_dma_blocks_remaining
-    ldrb r2,[r1]
-    sub r2,r2,#1
-    strb r2,[r1]
-
-    @ If _dma_blocks_remaining == 0, HDMA is complete
-    cmp r2,#0
-    bne _checkScanlineIRQ
-    ldr r1,=_dma_blocks_total
-    strb r2,[r1]
-    
-
-    @ Finally, fall through and continue execution
 _checkScanlineIRQ:
 	tst cycles,#CYC_LCD_ENABLED
 	beq noScanlineIRQ
@@ -434,16 +497,16 @@ _checkScanlineIRQ:
 	tstne r2,#0x40
 	bne ScanlineIRQ_fromLYC
 
-	@in vblank?  no Hblank or Mode 2 IRQ
+	@in vblank?  no Mode 2 IRQ
 	tst r2,#0x01
 	bne noScanlineIRQ
-	@Hblank IRQ or Mode 2 IRQ enabled?
-	tst r2,#0x28
+	@Mode 2 (OAM) IRQ enabled? (mode 0 is handled in hblank_scanlinehook)
+	tst r2,#0x20
 	beq noScanlineIRQ
 
 	@ STAT IRQ blocking: if LYC=LY is active on this scanline (coincidence
 	@ flag set AND LYC IE enabled), the STAT line is already high from LYC.
-	@ Mode 0/2 transitions cannot cause a new rising edge, so block.
+	@ Mode 2 transition cannot cause a new rising edge, so block.
 	tst r2,#0x40			@LYC interrupt enabled?
 	tstne r2,#0x04			@AND coincidence flag set?
 	bne noScanlineIRQ		@blocked: LYC holds line high
