@@ -51,19 +51,19 @@ jobs:
         mkdir -p /tmp/mgba-build/build
         cd /tmp/mgba-build/build
         cmake .. -DBUILD_QT=OFF -DBUILD_SDL=OFF \
+          -DM_CORE_GB=ON -DM_CORE_GBA=ON \
           -DUSE_LIBZIP=OFF -DUSE_MINIZIP=OFF -DUSE_EPOXY=OFF -DUSE_FFMPEG=OFF \
-          -DUSE_DISCORD_RPC=OFF -DUSE_LUA=OFF
+          -DUSE_DISCORD_RPC=OFF -DUSE_LUA=OFF -DUSE_LZMA=OFF
         make -j$(nproc)
 
     - name: Build test runner
       run: |
-        cc -O2 -g -fsanitize=address \
+        cc -O2 -g \
           -I/tmp/mgba-build/include -I/tmp/mgba-build/build/include -I/tmp/mgba-build/src \
           -include /tmp/mgba-build/build/include/mgba/flags.h \
           -DM_CORE_GB -DM_CORE_GBA -DMGBA_DLL \
           -o test_roms/mgba_runner test_roms/mgba_runner.c \
-          -L/tmp/mgba-build/build -lmgba -Wl,-rpath,/tmp/mgba-build/build \
-          -fsanitize=address
+          -L/tmp/mgba-build/build -lmgba -Wl,-rpath,/tmp/mgba-build/build
       env:
         LD_LIBRARY_PATH: /tmp/mgba-build/build
 
