@@ -45,23 +45,15 @@ jobs:
           libsqlite3-dev libedit-dev python3-pip
         pip3 install --break-system-packages Pillow
 
-    - name: Build libzip from source
-      run: |
-        git clone --depth 1 https://github.com/nih-at/libzip.git /tmp/libzip
-        mkdir -p /tmp/libzip/build
-        cd /tmp/libzip/build
-        cmake .. -DBUILD_TOOLS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_DOC=OFF -DBUILD_REGRESS=OFF
-        make -j$(nproc)
-        sudo make install
-
     - name: Build mGBA library
       run: |
         git clone --depth 1 https://github.com/mgba-emu/mgba.git /tmp/mgba-build
         mkdir -p /tmp/mgba-build/build
         cd /tmp/mgba-build/build
         cmake .. -DBUILD_QT=OFF -DBUILD_SDL=OFF \
-          -DUSE_EPOXY=OFF -DUSE_FFMPEG=OFF \
-          -DUSE_DISCORD_RPC=OFF -DUSE_LUA=OFF -DUSE_LZMA=OFF
+          -DUSE_EPOXY=OFF -DUSE_FFMPEG=OFF -DUSE_LIBZIP=OFF \
+          -DUSE_DISCORD_RPC=OFF -DUSE_LUA=OFF -DUSE_LZMA=OFF \
+          -DENABLE_VFS_FD=ON -DENABLE_VFS=ON -DENABLE_DIRECTORIES=ON
         make -j$(nproc)
 
     - name: Build test runner
