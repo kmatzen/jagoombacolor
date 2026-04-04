@@ -41,16 +41,18 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake libelf-dev libzip-dev libpng-dev \
-          libsqlite3-dev libedit-dev libepoxy-dev python3-pip
-        pip3 install Pillow
+        sudo apt-get install -y cmake libelf-dev libpng-dev \
+          libsqlite3-dev libedit-dev python3-pip
+        pip3 install --break-system-packages Pillow
 
     - name: Build mGBA library
       run: |
         git clone --depth 1 https://github.com/mgba-emu/mgba.git /tmp/mgba-build
         mkdir -p /tmp/mgba-build/build
         cd /tmp/mgba-build/build
-        cmake .. -DBUILD_QT=OFF -DBUILD_SDL=OFF
+        cmake .. -DBUILD_QT=OFF -DBUILD_SDL=OFF -DUSE_LIBZIP=OFF \
+          -DUSE_MINIZIP=OFF -DUSE_EPOXY=OFF -DUSE_FFMPEG=OFF \
+          -DUSE_DISCORD_RPC=OFF
         make -j$(nproc)
 
     - name: Build test runner
