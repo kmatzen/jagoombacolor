@@ -56,7 +56,15 @@ jobs:
         make -j$(nproc)
 
     - name: Build test runner
-      run: make -f test_roms/Makefile.test test_roms/mgba_runner
+      run: |
+        make -f test_roms/Makefile.test test_roms/mgba_runner \
+          LDFLAGS="-L/tmp/mgba-build/build -lmgba -Wl,-rpath,/tmp/mgba-build/build -lpthread -ldl -lm"
+
+    - name: Smoke test mgba_runner
+      run: |
+        python3 test_roms/goomba_compile.py -e jagoombacolor.gba -o /tmp/smoke.gba test_roms/ei_delay_test.gb
+        test_roms/mgba_runner /tmp/smoke.gba 10 /tmp/smoke.bmp || echo "Exit code: $?"
+        ls -la /tmp/smoke.bmp || echo "No output file"
 
     - name: Run custom ROM visual tests
       run: |
