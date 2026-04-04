@@ -55,15 +55,31 @@ jobs:
           -DUSE_DISCORD_RPC=OFF -DUSE_LUA=OFF
         make -j$(nproc)
 
+    - name: Debug mGBA build config
+      run: |
+        echo "=== flags.h ==="
+        cat /tmp/mgba-build/build/include/mgba/flags.h
+        echo "=== libraries ==="
+        ls /tmp/mgba-build/build/libmgba*
+        echo "=== COLOR_16_BIT check ==="
+        grep -r 'COLOR_16_BIT' /tmp/mgba-build/build/include/ || echo "not found"
+
     - name: Build test runner (static link)
       run: |
-        cc -O2 \
+        cc -O2 -g \
           -I/tmp/mgba-build/include -I/tmp/mgba-build/build/include -I/tmp/mgba-build/src \
           -include /tmp/mgba-build/build/include/mgba/flags.h \
           -DM_CORE_GB -DM_CORE_GBA \
           -o test_roms/mgba_runner test_roms/mgba_runner.c \
           /tmp/mgba-build/build/libmgba.a \
           -lpthread -ldl -lm -lpng -lz -lsqlite3 -ledit -lelf
+
+    - name: Smoke test mgba_runner with backtrace
+      run: |
+        python3 test_roms/goomba_compile.py -e jagoombacolor.gba -o /tmp/smoke.gba test_roms/ei_delay_test.gb
+        ulimit -c unlimited
+        test_roms/mgba_runner /tmp/smoke.gba 10 /tmp/smoke.bmp 2>&1 || true
+        if [ -f core* ]; then gdb -batch -ex "bt full" test_roms/mgba_runner core*; fi
 
     - name: Run custom ROM visual tests
       run: |
