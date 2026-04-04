@@ -63,7 +63,7 @@ jobs:
           -DM_CORE_GB -DM_CORE_GBA \
           -o test_roms/mgba_runner test_roms/mgba_runner.c \
           /tmp/mgba-build/build/libmgba.a \
-          -lpthread -ldl -lm -lpng -lz -lsqlite3 -ledit
+          -lpthread -ldl -lm -lpng -lz -lsqlite3 -ledit -lelf
 
     - name: Run custom ROM visual tests
       run: |
