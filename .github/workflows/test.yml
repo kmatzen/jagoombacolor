@@ -20,11 +20,6 @@ jobs:
       env:
         DEVKITARM: /opt/devkitpro/devkitARM
 
-    - name: Validate memory and timing
-      run: |
-        # These checks run during make but verify they passed
-        grep -q "All constraints OK" <(make 2>&1) || echo "Build validation embedded in make"
-
     - name: Upload GBA binary
       uses: actions/upload-artifact@v4
       with:
