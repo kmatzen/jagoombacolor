@@ -42,7 +42,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y cmake libelf-dev libpng-dev \
-          libsqlite3-dev libedit-dev python3-pip
+          libsqlite3-dev libedit-dev python3-pip libzip-dev
         pip3 install --break-system-packages Pillow
 
     - name: Build mGBA library
@@ -51,8 +51,7 @@ jobs:
         mkdir -p /tmp/mgba-build/build
         cd /tmp/mgba-build/build
         cmake .. -DBUILD_QT=OFF -DBUILD_SDL=OFF \
-          -DM_CORE_GB=ON -DM_CORE_GBA=ON \
-          -DUSE_LIBZIP=OFF -DUSE_MINIZIP=OFF -DUSE_EPOXY=OFF -DUSE_FFMPEG=OFF \
+          -DUSE_EPOXY=OFF -DUSE_FFMPEG=OFF \
           -DUSE_DISCORD_RPC=OFF -DUSE_LUA=OFF -DUSE_LZMA=OFF
         make -j$(nproc)
 
@@ -66,12 +65,6 @@ jobs:
           -L/tmp/mgba-build/build -lmgba -Wl,-rpath,/tmp/mgba-build/build
       env:
         LD_LIBRARY_PATH: /tmp/mgba-build/build
-
-    - name: Check mGBA build output
-      run: |
-        cat /tmp/mgba-build/build/include/mgba/flags.h
-        ldd test_roms/mgba_runner || true
-        nm -D /tmp/mgba-build/build/libmgba.so | grep -i 'mCoreFind\|GBACore\|mGBAInit' | head -10
 
     - name: Smoke test mgba_runner
       run: |
