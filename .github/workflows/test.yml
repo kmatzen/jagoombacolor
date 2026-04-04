@@ -67,6 +67,12 @@ jobs:
       env:
         LD_LIBRARY_PATH: /tmp/mgba-build/build
 
+    - name: Check mGBA build output
+      run: |
+        cat /tmp/mgba-build/build/include/mgba/flags.h
+        ldd test_roms/mgba_runner || true
+        nm -D /tmp/mgba-build/build/libmgba.so | grep -i 'mCoreFind\|GBACore\|mGBAInit' | head -10
+
     - name: Smoke test mgba_runner
       run: |
         python3 test_roms/goomba_compile.py -e jagoombacolor.gba -o /tmp/smoke.gba test_roms/ei_delay_test.gb
