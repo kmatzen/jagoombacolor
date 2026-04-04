@@ -77,6 +77,9 @@ jobs:
 
     - name: Smoke test mgba_runner
       run: |
+        echo "=== VFS flags ==="
+        grep 'VFS\|DIRECTORIES' /tmp/mgba-build/build/include/mgba/flags.h
+        echo "=== Test ==="
         python3 test_roms/goomba_compile.py -e jagoombacolor.gba -o /tmp/smoke.gba test_roms/ei_delay_test.gb
         test_roms/mgba_runner /tmp/smoke.gba 10 /tmp/smoke.bmp
       env:

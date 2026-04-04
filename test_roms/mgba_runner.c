@@ -178,6 +178,7 @@ int main(int argc, char** argv) {
         fprintf(stderr, "Failed to find core for %s\n", rom_path);
         return 1;
     }
+    fprintf(stderr, "Core found: %p, init: %p\n", (void*)core, (void*)core->init);
     core->init(core);
     mCoreInitConfig(core, NULL);
 
