@@ -34,6 +34,12 @@ test_roms/trace_compare: test_roms/trace_compare.c
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
 test: test_roms/mgba_runner
+	python3 test_roms/run_all_tests.py
+
+test-quick: test_roms/mgba_runner
+	python3 test_roms/run_all_tests.py --quick
+
+test-visual: test_roms/mgba_runner
 	python3 test_roms/run_tests.py
 
 baseline: test_roms/mgba_runner
