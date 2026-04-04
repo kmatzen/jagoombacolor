@@ -45,45 +45,37 @@ jobs:
           libsqlite3-dev libedit-dev python3-pip
         pip3 install --break-system-packages Pillow
 
-    - name: Build mGBA library (static)
+    - name: Build mGBA library
       run: |
         git clone --depth 1 https://github.com/mgba-emu/mgba.git /tmp/mgba-build
         mkdir -p /tmp/mgba-build/build
         cd /tmp/mgba-build/build
-        cmake .. -DBUILD_QT=OFF -DBUILD_SDL=OFF -DBUILD_SHARED=OFF -DBUILD_STATIC=ON \
+        cmake .. -DBUILD_QT=OFF -DBUILD_SDL=OFF \
           -DUSE_LIBZIP=OFF -DUSE_MINIZIP=OFF -DUSE_EPOXY=OFF -DUSE_FFMPEG=OFF \
           -DUSE_DISCORD_RPC=OFF -DUSE_LUA=OFF
         make -j$(nproc)
 
-    - name: Debug mGBA build config
+    - name: Build test runner
       run: |
-        echo "=== flags.h ==="
-        cat /tmp/mgba-build/build/include/mgba/flags.h
-        echo "=== libraries ==="
-        ls /tmp/mgba-build/build/libmgba*
-        echo "=== COLOR_16_BIT check ==="
-        grep -r 'COLOR_16_BIT' /tmp/mgba-build/build/include/ || echo "not found"
-
-    - name: Build test runner (static link)
-      run: |
-        cc -O2 -g \
+        cc -O2 -g -fsanitize=address \
           -I/tmp/mgba-build/include -I/tmp/mgba-build/build/include -I/tmp/mgba-build/src \
           -include /tmp/mgba-build/build/include/mgba/flags.h \
-          -DM_CORE_GB -DM_CORE_GBA \
+          -DM_CORE_GB -DM_CORE_GBA -DMGBA_DLL \
           -o test_roms/mgba_runner test_roms/mgba_runner.c \
-          /tmp/mgba-build/build/libmgba.a \
-          -lpthread -ldl -lm -lpng -lz -lsqlite3 -ledit -lelf
+          -L/tmp/mgba-build/build -lmgba -Wl,-rpath,/tmp/mgba-build/build \
+          -fsanitize=address
+      env:
+        LD_LIBRARY_PATH: /tmp/mgba-build/build
 
-    - name: Smoke test mgba_runner with backtrace
+    - name: Smoke test mgba_runner
       run: |
         python3 test_roms/goomba_compile.py -e jagoombacolor.gba -o /tmp/smoke.gba test_roms/ei_delay_test.gb
-        ulimit -c unlimited
-        test_roms/mgba_runner /tmp/smoke.gba 10 /tmp/smoke.bmp 2>&1 || true
-        if [ -f core* ]; then gdb -batch -ex "bt full" test_roms/mgba_runner core*; fi
+        test_roms/mgba_runner /tmp/smoke.gba 10 /tmp/smoke.bmp
+      env:
+        LD_LIBRARY_PATH: /tmp/mgba-build/build
 
     - name: Run custom ROM visual tests
       run: |
-        # Run only tests that use custom (non-commercial) ROMs
         python3 test_roms/run_tests.py \
           -t ei_delay_test \
           -t halt_bug_test \
@@ -91,6 +83,10 @@ jobs:
           -t rst_timing_test \
           -t sprite_limit_test \
           -t timer_accuracy_test
+      env:
+        LD_LIBRARY_PATH: /tmp/mgba-build/build
 
     - name: Run RST timing test
       run: python3 test_roms/test_rst_timing.py
+      env:
+        LD_LIBRARY_PATH: /tmp/mgba-build/build
