@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>ChromA — GB/GBC on GBA</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #0a0a0f; color: #ccc; font-family: system-ui, sans-serif; display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 20px; }
+  h1 { color: #5bf; font-size: 1.8em; margin-bottom: 2px; }
+  .sub { color: #556; font-size: 0.9em; margin-bottom: 16px; }
+  #screen { image-rendering: pixelated; background: #000; border: 2px solid #222; width: 480px; height: 320px; }
+  #drop-zone { border: 2px dashed #333; border-radius: 10px; padding: 30px 40px; cursor: pointer; transition: border-color 0.2s; margin: 16px 0; }
+  #drop-zone:hover, #drop-zone.drag { border-color: #5bf; }
+  #drop-zone .big { font-size: 1.2em; color: #5bf; }
+  .keys { font-size: 12px; color: #445; margin: 8px 0; }
+  kbd { background: #1a1a22; padding: 1px 5px; border-radius: 3px; border: 1px solid #333; }
+  .footer { color: #334; font-size: 11px; margin-top: auto; padding-top: 20px; }
+  a { color: #5bf; }
+  #status { color: #f85; font-size: 13px; margin: 8px 0; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+
+<h1>ChromA</h1>
+<p class="sub">Game Boy / Game Boy Color emulator running on Game Boy Advance</p>
+
+<canvas id="screen" width="240" height="160"></canvas>
+
+<p class="keys">
+  <kbd>X</kbd>=A <kbd>Z</kbd>=B <kbd>Enter</kbd>=Start <kbd>Backspace</kbd>=Select Arrows=D-pad
+</p>
+
+<div id="drop-zone">
+  <p class="big">Drop a .gb or .gbc ROM here</p>
+  <p style="margin-top:6px; color:#556">or click to browse</p>
+  <input type="file" id="rom-input" accept=".gb,.gbc" style="display:none">
+</div>
+
+<p id="status"></p>
+
+<div class="footer">
+  GBA emulation: <a href="https://github.com/thenick775/mgba-wasm">@thenick775/mgba-wasm</a> (BSD-2-Clause)
+  &middot; mGBA core (MPL-2.0)
+  &middot; <a href="https://github.com/kmatzen/jagoombacolor">ChromA source</a>
+</div>
+
+<script type="module">
+import mGBA from './mgba.js';
+
+const canvas = document.getElementById('screen');
+const status = document.getElementById('status');
+const dropZone = document.getElementById('drop-zone');
+const romInput = document.getElementById('rom-input');
+
+status.textContent = 'Initializing emulator...';
+
+let emu = null;
+let chromaData = null;
+
+async function init() {
+  try {
+    emu = await mGBA({ canvas });
+    await emu.FSInit();
+    status.textContent = 'Loading ChromA...';
+
+    const resp = await fetch('chroma.gba');
+    chromaData = new Uint8Array(await resp.arrayBuffer());
+
+    status.textContent = 'Ready \u2014 drop a Game Boy ROM';
+  } catch (e) {
+    status.textContent = 'Error: ' + e.message;
+    console.error(e);
+  }
+}
+
+async function loadGB(file) {
+  if (!emu || !chromaData) return;
+  status.textContent = 'Building ROM...';
+
+  const gbData = new Uint8Array(await file.arrayBuffer());
+
+  // Goomba format: emulator + GB ROM + 264 zero bytes terminator
+  const combined = new Uint8Array(chromaData.length + gbData.length + 264);
+  combined.set(chromaData, 0);
+  combined.set(gbData, chromaData.length);
+
+  const romPath = emu.filePaths().gamePath + '/chroma.gba';
+  emu.FS.writeFile(romPath, combined);
+
+  if (emu.loadGame(romPath)) {
+    status.textContent = '';
+    dropZone.classList.add('hidden');
+  } else {
+    status.textContent = 'Failed to load ROM';
+  }
+}
+
+dropZone.addEventListener('click', () => romInput.click());
+romInput.addEventListener('change', e => { if (e.target.files[0]) loadGB(e.target.files[0]); });
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag');
+  if (e.dataTransfer.files[0]) loadGB(e.dataTransfer.files[0]);
+});
+
+init();
+</script>
+</body>
+</html>
